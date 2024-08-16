@@ -4,8 +4,7 @@ import json
 from requests.auth import HTTPDigestAuth
 from email import message_from_bytes
 from email.policy import default
-
-import requests
+import chardet
 import os
 import time
 from datetime import datetime
@@ -77,8 +76,15 @@ def process_mime_part(part, turno_api, token):
     content_type = part.get_content_type()
     if content_type == "application/json":
         event_data = part.get_payload(decode=True)
+        # Detect encoding before attempting to load the JSON
+        encoding = chardet.detect(event_data)['encoding']
+        if encoding is None:
+            encoding = 'utf-8'  # Default to utf-8 if detection fails
+
+
         try:
-            event = json.loads(event_data)
+            #event = json.loads(event_data)
+            event = json.loads(event_data.decode(encoding, errors='replace'))
             if event.get("eventType") != "videoloss":
                 event_ip_address = event.get("ipAddress")
                 date_time = event.get("dateTime")
@@ -113,7 +119,13 @@ def process_mime_part(part, turno_api, token):
         if json_start != -1:
             json_data = other_data[json_start:]
             try:
-                event = json.loads(json_data)
+                # Detect encoding and handle errors similarly
+                encoding = chardet.detect(json_data)['encoding']
+                if encoding is None:
+                    encoding = 'utf-8'
+
+                #event = json.loads(json_data)
+                event = json.loads(json_data.decode(encoding, errors='replace'))
                 if event.get("eventType") != "videoloss":
                     event_ip_address = event.get("ipAddress")
                     date_time = event.get("dateTime")
@@ -136,7 +148,7 @@ def process_mime_part(part, turno_api, token):
                     print(event)
                     print('------------------------------------------------------------------')
                     if employee_no_string:
-                        post_to_turno_api(employee_no_string, event_ip_address, date_time)
+                        post_to_turno_api(turno_api, token,employee_no_string, event_ip_address, date_time)
 
                     # clear all variables
                     #employee_no_string = None
@@ -179,8 +191,8 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
             print(f"Failed to post to Turno API. Status code: {response.status_code}")
             #print(response.text)
     except requests.exceptions.RequestException as e:
-        print('exception')
-        #print(f"Error posting to Turno API: {e}")
+        #print('exception')
+        print(f"Error posting to Turno API: {e}")
 
 
 def main():
