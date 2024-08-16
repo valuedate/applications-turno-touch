@@ -195,8 +195,8 @@ def main():
     turno_api = config['settings']['turno_api']
     token = config['settings']['token']
 
-    log_filename = setup_logging()
-    logging.info(f"Starting new cycle. Log file: {log_filename}")
+    #log_filename = setup_logging()
+    #logging.info(f"Starting new cycle. Log file: {log_filename}")
 
     get_events(ip_address, ip_user, ip_pass, turno_api, token)
 
