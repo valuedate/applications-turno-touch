@@ -26,6 +26,9 @@ def main():
 
     loop_count = int(config['settings']['loop_count'])
     lock_file_path = config['settings']['lock_file_path']
+    ip_address = config['settings']['ip_address']
+    user = config['settings']['admin']
+    pass = config['settings']['user']
  
     log_filename = setup_logging()
     logging.info(f"Starting new cycle. Log file: {log_filename}")
