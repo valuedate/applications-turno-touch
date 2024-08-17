@@ -3,5 +3,5 @@
 
 cd /
 cd home/turno
-sudo python main.py
+sudo python hikvision.py
 cd /
