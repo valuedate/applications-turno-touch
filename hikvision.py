@@ -6,10 +6,13 @@ from email import message_from_bytes
 from email.policy import default
 import chardet
 import os
+import signal
+import sys
 import time
 from datetime import datetime
 import configparser
 import logging
+import pyfiglet
 
 
 # Directory to save images
@@ -17,14 +20,6 @@ IMAGE_SAVE_DIR = 'saved_images'
 
 # Ensure the directory exists
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
-
-# Camera credentials and IP
-#CAMERA_IP = '10.0.0.115'  # Replace with your camera's IP
-#CAMERA_IP = '10.0.0.73'  # Replace with your camera's IP
-#CAMERA_IP = '192.168.68.155'  # Replace with your camera's IP
-#USERNAME = 'admin'  # Replace with your camera's username
-#PASSWORD = 'rFERNANDES18'  # Replace with your camera's password
-#PASSWORD = 'qwerty12'  # Replace with your camera's password
 
 
 # init logging
@@ -42,102 +37,107 @@ def setup_logging():
     )
     return log_filename
 
+def signal_handler(sig, frame):
+    print_with_timestamp("CTRL+C detected. Exiting gracefully...")
+    logging.info("CTRL+C detected. Exiting gracefully...")
+    sys.exit(0)
+#
+def print_with_timestamp(message):
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"{current_time} - {message}")
+
+# prettify messages
+def print_ascii_message(message):
+    #message = "Turno Touch interface by valuedate.io"
+    ascii_art = pyfiglet.figlet_format(message)
+    print(ascii_art)
+
 # Function to get events
 def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, save_photos, debug_level):
-    try:
-        # hikvision connection
-        EVENTS_API_URL = f'http://{ip_address}/ISAPI/Event/notification/alertStream'
+    # Register the signal handler
+    signal.signal(signal.SIGINT, signal_handler)
 
-        # Send the request to the camera
-        response = requests.get(EVENTS_API_URL, auth=HTTPDigestAuth(ip_user, ip_pass), stream=True)
+    logging.info(f"Connecting to: {ip_address}")
+    print_with_timestamp(f"Connecting to: {ip_address}")
 
-        # Check if the request was successful
-        if response.status_code == 200:
-            print("Connected to the event stream. Listening for events...")
-            loop_count = 0
-            buffer = b""
-            for chunk in response.iter_content(chunk_size=4096):
-                loop_count += 1
-                current_time = datetime.now().strftime('%Y-%m-%d %H:%M')
-                log_message = f"{current_time} Loop number: {loop_count}"
-                print(log_message)
-                logging.info(log_message)
+    while True:
+        try:
+            # hikvision connection
+            EVENTS_API_URL = f'http://{ip_address}/ISAPI/Event/notification/alertStream'
 
-                if os.path.exists(lock_file_path):
-                    logging.info("Lock file found. Ending loop.")
-                    print("Lock file found. Ending loop.")
-                    break
+            # Send the request to the camera with a timeout
+            response = requests.get(EVENTS_API_URL, auth=HTTPDigestAuth(ip_user, ip_pass), stream=True, timeout=10)
 
-                buffer += chunk
-                while b"--MIME_boundary" in buffer:
-                    # Split the buffer by the MIME boundary
-                    parts = buffer.split(b"--MIME_boundary", 1)
-                    buffer = parts[1]
-                    mime_part = parts[0]
+            # Check if the request was successful
+            if response.status_code == 200:
+                print_with_timestamp("Connected to the event stream. Listening for events...")
+                loop_count = 0
+                buffer = b""
+                last_chunk_time = time.time()
 
-                    if mime_part:
-                        # Parse the MIME part
-                        msg = message_from_bytes(mime_part, policy=default)
-                        if msg.is_multipart():
-                            for part in msg.iter_parts():
-                                process_mime_part(part, turno_api, token)
-                                logging.info(part)
-                        else:
-                            process_mime_part(msg, turno_api, token)
-                            logging.info(msg)
-        else:
-            print(f"Failed to connect to event stream. Status code: {response.status_code}")
-            print(response.text)
+                for chunk in response.iter_content(chunk_size=4096):
+                    current_time = time.time()
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
+                    # Check if connection is still active by comparing time intervals
+                    if current_time - last_chunk_time > 15:  # 15 seconds threshold
+                        print_with_timestamp("No data received for 15 seconds. Reconnecting...")
+                        logging.warning("No data received for 15 seconds. Reconnecting...")
+                        response.close()
+                        break
+
+                    loop_count += 1
+                    log_message = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} Loop number: {loop_count}"
+                    print_with_timestamp(log_message)
+                    logging.info(log_message)
+
+                    if os.path.exists(lock_file_path):
+                        logging.info("Lock file found. Ending loop.")
+                        print_with_timestamp("Lock file found. Ending loop.")
+                        response.close()
+                        return  # Exit function when lock file is found
+
+                    buffer += chunk
+                    last_chunk_time = current_time  # Reset last chunk time
+
+                    while b"--MIME_boundary" in buffer:
+                        # Split the buffer by the MIME boundary
+                        parts = buffer.split(b"--MIME_boundary", 1)
+                        buffer = parts[1]
+                        mime_part = parts[0]
+
+                        if mime_part:
+                            # Parse the MIME part
+                            msg = message_from_bytes(mime_part, policy=default)
+                            if msg.is_multipart():
+                                for part in msg.iter_parts():
+                                    process_mime_part(part, turno_api, token)
+                                    logging.info(part)
+                            else:
+                                process_mime_part(msg, turno_api, token)
+                                logging.info(msg)
+
+            else:
+                print_with_timestamp(f"Failed to connect to event stream. Status code: {response.status_code}")
+                print_with_timestamp(response.text)
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error: {e}")
+            print_with_timestamp("Failed to connect. Waiting 10 seconds before retrying...")
+            time.sleep(10)  # Wait for 10 seconds before retrying
+
 
 def process_mime_part(part, turno_api, token):
-    msg = message_from_bytes(part, policy=default)
-
-    #----------------------------
-    # Split headers and body
-    try:
-        headers, body = mime_part.split(b'\r\n\r\n', 1)
-    except ValueError:
-        # If split fails, the MIME part is likely incomplete
-        print("Incomplete MIME part received, skipping...")
-        return
-
-    headers_str = headers.decode('utf-8', errors='ignore')
-
-    # Check the content type and handle accordingly
-    if 'Content-Type: application/json' in headers_str:
-        try:
-            event = json.loads(body.decode('utf-8', errors='ignore'))
-            print("Event Received (JSON):")
-            print(json.dumps(event, indent=4))
-        except json.JSONDecodeError:
-            print("Received malformed JSON event:")
-            print(body.decode('utf-8', errors='ignore'))
-    elif 'Content-Type: image/jpeg' in headers_str:
-        filename = "unnamed.jpg"
-        for header in headers_str.split('\r\n'):
-            if header.startswith("Content-Disposition"):
-                disposition = header.split(';')
-                for item in disposition:
-                    if item.strip().startswith("filename="):
-                        filename = item.split('=')[1].strip().strip('"')
-        save_image(filename, body)
-    else:
-        print(f"Unhandled content type in headers: {headers_str}")
-    #----------------------------
     content_type = part.get_content_type()
+    print_with_timestamp(content_type)
     if content_type == "application/json":
+        #print_with_timestamp('application json')
         event_data = part.get_payload(decode=True)
-        # Detect encoding before attempting to load the JSON
-        encoding = chardet.detect(event_data)['encoding']
-        if encoding is None:
-            encoding = 'utf-8'  # Default to utf-8 if detection fails
-
-
         try:
-            #event = json.loads(event_data)
+            # Detect encoding before attempting to load the JSON
+            encoding = chardet.detect(event_data)['encoding']
+            if encoding is None:
+                encoding = 'utf-8'  # Default to utf-8 if detection fails
+
             event = json.loads(event_data.decode(encoding, errors='replace'))
             if event.get("eventType") != "videoloss":
                 event_ip_address = event.get("ipAddress")
@@ -145,40 +145,19 @@ def process_mime_part(part, turno_api, token):
                 event_type = event.get("eventType")
                 event_state = event.get("eventState")
                 event_description = event.get("eventDescription")
-                # Extract employeeNoString if exists
                 access_controller_event = event.get("AccessControllerEvent", {})
-                employee_card_no = access_controller_event.get("cardNo")
-                employee_user_type = access_controller_event.get("userType")
                 employee_no_string = access_controller_event.get("employeeNoString")
 
-                #print('+++++++++++++++++++++++++++++++++++++++++++++++++')
-                #print(access_controller_event)
-                #print('+++++++++++++++++++++++++++++++++++++++++++++++++')
-                #print(f"Employee Number: {employee_no_string}")
-
-                #print(f"Event Type: {event_type}\nEvent State: {event_state}\nEvent Description: {event_description}")
-                #print('------------------------------------------------------------------')
-                #print(event)
-                #print('------------------------------------------------------------------')
                 if employee_no_string:
+                    #print_with_timestamp('post to turno')
                     post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, date_time)
 
         except json.JSONDecodeError:
-            print("Received malformed JSON event:")
-            print(f"Received data of content type {content_type}:")
+            print_with_timestamp("Received malformed JSON event")
             #print(event_data)
-            image_data = part.get_payload(decode=True)
-            # Handle the image data (e.g., save to file, process, etc.)
-            print("Received image data of length:", len(image_data))
-            # Save the image with a timestamp prefix
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            file_name = f"{timestamp}_event_image.jpg"
-            with open(file_name, 'wb') as f:
-                f.write(image_data)
-            print(f"Received image data of length: {len(image_data)} and saved as {file_name}")
+
     elif content_type == "text/plain":
         other_data = part.get_payload(decode=True)
-        # Extract JSON part from text/plain content
         json_start = other_data.find(b'{')
         if json_start != -1:
             json_data = other_data[json_start:]
@@ -188,7 +167,6 @@ def process_mime_part(part, turno_api, token):
                 if encoding is None:
                     encoding = 'utf-8'
 
-                #event = json.loads(json_data)
                 event = json.loads(json_data.decode(encoding, errors='replace'))
                 if event.get("eventType") != "videoloss":
                     event_ip_address = event.get("ipAddress")
@@ -196,57 +174,29 @@ def process_mime_part(part, turno_api, token):
                     event_type = event.get("eventType")
                     event_state = event.get("eventState")
                     event_description = event.get("eventDescription")
-                    # Extract employeeNoString if exists
                     access_controller_event = event.get("AccessControllerEvent", {})
-                    employee_card_no = access_controller_event.get("cardNo")
-                    employee_user_type = access_controller_event.get("userType")
                     employee_no_string = access_controller_event.get("employeeNoString")
 
-                    #print('+++++++++++++++++++++++++++++++++++++++++++++++++')
-                    #print(access_controller_event)
-                    #print('+++++++++++++++++++++++++++++++++++++++++++++++++')
-                    #print(f"Employee Number: {employee_no_string}")
-
-                    #print(f"Event Type: {event_type}\nEvent State: {event_state}\nEvent Description: {event_description}")
-                    #print('------------------------------------------------------------------')
-                    #print(event)
-                    #print('------------------------------------------------------------------')
                     if employee_no_string:
-                        post_to_turno_api(turno_api, token,employee_no_string, event_ip_address, date_time)
-
-                    # clear all variables
-                    #employee_no_string = None
+                        post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, date_time)
 
             except json.JSONDecodeError:
-                print("Received malformed JSON event:")
-                print(f"Received data of content type {content_type}:")
-                image_data = part.get_payload(decode=True)
-                # Handle the image data (e.g., save to file, process, etc.)
-                print("Received image data of length:", len(image_data))
-                # Save the image with a timestamp prefix
-                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                file_name = f"{timestamp}_event_image.jpg"
-                with open(file_name, 'wb') as f:
-                    f.write(image_data)
-                print(f"Received image data of length: {len(image_data)} and saved as {file_name}")
-                #print(json_data)
+                print_with_timestamp("Received malformed JSON event:")
+                print_with_timestamp(json_data)
         else:
-            print(f"Received data of content type {content_type} without JSON content:")
-            print(other_data)
+            print_with_timestamp(f"Received data of content type {content_type} without JSON content:")
+            #print(other_data)
     elif content_type == "image/jpeg":
         image_data = part.get_payload(decode=True)
-        # Handle the image data (e.g., save to file, process, etc.)
-        print("Received image data of length:", len(image_data))
-        # Save the image with a timestamp prefix
+        print_with_timestamp("Received image data of length:", len(image_data))
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         file_name = f"{timestamp}_event_image.jpg"
         with open(file_name, 'wb') as f:
             f.write(image_data)
-        print(f"Received image data of length: {len(image_data)} and saved as {file_name}")
+        print_with_timestamp(f"Received image data of length: {len(image_data)} and saved as {file_name}")
     else:
-        # Handle other content types if necessary
         other_data = part.get_payload(decode=True)
-        print(f"Received data of content type {content_type}:")
+        print_with_timestamp(f"Received data of content type {content_type}:")
         #print(other_data)
 
 def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, date_time):
@@ -257,25 +207,42 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
         'dateTime': date_time
     }
     headers = {'Content-Type': 'application/json'}
-    try:
-        response = requests.post(url, data=json.dumps(payload), headers=headers)
-        if response.status_code == 200:
-            print("Successfully posted to Turno API")
-        else:
-            print(f"Failed to post to Turno API. Status code: {response.status_code}")
-            #print(response.text)
-    except requests.exceptions.RequestException as e:
-        #print('exception')
-        print(f"Error posting to Turno API: {e}")
+
+    while True:
+        try:
+            response = requests.post(url, data=json.dumps(payload), headers=headers)
+            if response.status_code == 200:
+                print_with_timestamp("Successfully posted {employee_no_string} to Turno API")
+                break  # Exit the loop on success
+            elif response.status_code == 404:
+                print_with_timestamp(f"Post to Turno of {employee_no_string} received 404 error. Retrying in 10 seconds...")
+                time.sleep(10)  # Wait for 10 seconds before retrying
+            else:
+                print_with_timestamp(f"Failed to post {employee_no_string} to Turno API. Status code: {response.status_code}")
+                logging.info(f"Failed to post {employee_no_string} to Turno API. Status code: {response.status_code}")
+                # Optionally, you can print the response text or log it
+                # print_with_timestamp(response.text)
+                break  # Exit the loop for any status code other than 404
+        except requests.exceptions.RequestException as e:
+            print_with_timestamp(f"Error posting to Turno API: {e}")
+            break  # Exit the loop on request exception
 
 # Function to save image data to a file
 def save_image(filename, image_data):
     file_path = os.path.join(IMAGE_SAVE_DIR, filename)
     with open(file_path, 'wb') as image_file:
         image_file.write(image_data)
-    print(f"Image saved as: {file_path}")
+    print_with_timestamp(f"Image saved as: {file_path}")
 
 def main():
+    print('###############################')
+    print_ascii_message('TURNO')
+    print('###############################')
+    print('####### www.turno.cloud #######')
+    print('###############################')
+    print('  on-prem to cloud interface')
+    print('    developed by valuedate')
+    print('###############################')
     config = configparser.ConfigParser()
     config.read('config.ini')  # Replace with the actual path to the config file
 
