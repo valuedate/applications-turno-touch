@@ -13,6 +13,7 @@ from datetime import datetime
 import configparser
 import logging
 import pyfiglet
+import threading
 
 
 # Directory to save images
@@ -52,13 +53,29 @@ def print_ascii_message(message):
     ascii_art = pyfiglet.figlet_format(message)
     print(ascii_art)
 
+
+def ping_turno_api_loop(turno_ping, token):
+    while True:
+        try:
+            ping_turno_api(turno_ping, token)  # Call the ping_turno_api function
+            time.sleep(60)  # Wait for 60 seconds
+        except Exception as e:
+            logging.error(f"Error during turno API ping: {e}")
+            time.sleep(60)  # Wait for 60 seconds even in case of an error
+
+
 # Function to get events
-def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, save_photos, debug_level):
+def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, save_photos, debug_level, turno_ping):
     # Register the signal handler
     signal.signal(signal.SIGINT, signal_handler)
 
     logging.info(f"Connecting to: {ip_address}")
     print_with_timestamp(f"Connecting to: {ip_address}")
+
+    # Start the ping_turno_api in a separate thread
+    ping_thread = threading.Thread(target=ping_turno_api_loop, args=(turno_ping,token))
+    ping_thread.daemon = True  # This ensures the thread will exit when the main program exits
+    ping_thread.start()
 
     while True:
         try:
@@ -227,6 +244,26 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
             print_with_timestamp(f"Error posting to Turno API: {e}")
             break  # Exit the loop on request exception
 
+
+def ping_turno_api(turno_ping, token):
+    url = f"{turno_ping}{token}"
+    payload = {
+        'token': token,
+    }
+    headers = {'Content-Type': 'application/json'}
+    try:
+        response = requests.post(url, data=json.dumps(payload), headers=headers)
+        if response.status_code == 200:
+            print_with_timestamp("Successfully ping to Turno API")
+        else:
+            print_with_timestamp(f"Failed to ping to Turno API. Status code: {response.status_code}")
+            logging.info(f"Failed to ping to Turno API. Status code: {response.status_code}")
+            # Optionally, you can print the response text or log it
+            # print_with_timestamp(response.text)
+    except requests.exceptions.RequestException as e:
+        print_with_timestamp(f"Error pinging to Turno API: {e}")
+
+
 # Function to save image data to a file
 def save_image(filename, image_data):
     file_path = os.path.join(IMAGE_SAVE_DIR, filename)
@@ -252,6 +289,7 @@ def main():
     ip_user = config['settings']['user']
     ip_pass = config['settings']['pass']
     turno_api = config['settings']['turno_api']
+    turno_ping = config['settings']['turno_ping']
     token = config['settings']['token']
     save_photos = config['settings']['save_photos']
     debug_level = config['settings']['debug_level']
@@ -259,7 +297,7 @@ def main():
     log_filename = setup_logging()
     logging.info(f"Starting new cycle. Log file: {log_filename}")
 
-    get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, save_photos, debug_level)
+    get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, save_photos, debug_level, turno_ping)
 
 
 if __name__ == "__main__":
