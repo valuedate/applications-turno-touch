@@ -1,0 +1,10 @@
+2024-09-11 16:40 - Starting new cycle. Log file: logs/log_2024-09-11_16-40.log
+2024-09-11 16:40 - Connecting to: 192.168.68.117
+2024-09-11 16:40 - Failed to parse headers (url=http://192.168.68.117:80/ISAPI/Event/notification/alertStream): [MissingHeaderBodySeparatorDefect(), CloseBoundaryNotFoundDefect()], unparsed data: None
+Traceback (most recent call last):
+  File "C:\app\env\applications-turno-touch\lib\site-packages\urllib3\connection.py", line 467, in getresponse
+    assert_header_parsing(httplib_response.msg)
+  File "C:\app\env\applications-turno-touch\lib\site-packages\urllib3\util\response.py", line 88, in assert_header_parsing
+    raise HeaderParsingError(defects=defects, unparsed_data=unparsed_data)
+urllib3.exceptions.HeaderParsingError: [MissingHeaderBodySeparatorDefect(), CloseBoundaryNotFoundDefect()], unparsed data: None
+2024-09-11 16:40 - CTRL+C detected. Exiting gracefully...

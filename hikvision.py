@@ -14,10 +14,14 @@ import configparser
 import logging
 import pyfiglet
 import threading
+import re
 
 
 # Directory to save images
 IMAGE_SAVE_DIR = 'saved_images'
+
+# Define the boundary string for MIME parts
+boundary = '--MIME_boundary'
 
 # Ensure the directory exists
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
@@ -64,6 +68,18 @@ def ping_turno_api_loop(turno_ping, token):
             time.sleep(60)  # Wait for 60 seconds even in case of an error
 
 
+def extract_content_and_json(text):
+    # Extract only the main part of Content-Type (before the semicolon)
+    content_type_match = re.search(r'Content-Type:\s*([^;]+)', text)
+    content_type = content_type_match.group(1).strip() if content_type_match else None
+
+    # Extract JSON content using another regular expression
+    json_match = re.search(r'(\{.*\})', text, re.DOTALL)
+    body = json.loads(json_match.group(1)) if json_match else None
+
+    return content_type, body
+
+
 # Function to get events
 def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, save_photos, debug_level, turno_ping):
     # Register the signal handler
@@ -85,63 +101,40 @@ def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, s
 
 
     try:
-
-        #EVENTS_API_URL = f'http://{ip_address}/ISAPI/Event/notification/alertStream'
-
         # Send the request to the camera with a timeout
         with session.get(url, auth=HTTPDigestAuth(ip_user, ip_pass), stream=True, timeout=999) as response:
+            # check if theres a lock file
+            if os.path.exists(lock_file_path):
+                logging.info("Lock file found. Ending loop.")
+                print_with_timestamp("Lock file found. Ending loop.")
+                response.close()
+                return  # Exit function when lock file is found
 
             # Check if the request was successful
             if response.status_code == 200:
                 print_with_timestamp("Connected to the event stream. Listening for events...")
-                loop_count = 0
-                buffer = b""
-                last_chunk_time = time.time()
+                buffer = ''
+                for line in response.iter_lines():
+                    if line:
+                        decoded_line = line.decode('utf-8')
+                        buffer += decoded_line + '\n'
 
-                for chunk in response.iter_content(chunk_size=4096):
-                    current_time = time.time()
+                        # Check if the buffer contains a complete MIME part (split by boundary)
+                        if boundary in buffer:
+                            # Split the buffer by the boundary
+                            parts = buffer.split(boundary)
 
-                    # Check if connection is still active by comparing time intervals
-                    if current_time - last_chunk_time > 15:  # 15 seconds threshold
-                        print_with_timestamp("No data received for 15 seconds. Reconnecting...")
-                        logging.warning("No data received for 15 seconds. Reconnecting...")
-                        response.close()
-                        break
+                            # Process each part except the last one (it's incomplete)
+                            for part in parts[:-1]:
+                                if part.strip():
+                                    process_mime_part(part.strip(), turno_api, token)
 
-                    loop_count += 1
-                    log_message = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} Loop number: {loop_count}"
-                    print_with_timestamp(log_message)
-                    logging.info(log_message)
-
-                    if os.path.exists(lock_file_path):
-                        logging.info("Lock file found. Ending loop.")
-                        print_with_timestamp("Lock file found. Ending loop.")
-                        response.close()
-                        return  # Exit function when lock file is found
-
-                    buffer += chunk
-                    last_chunk_time = current_time  # Reset last chunk time
-
-                    while b"--MIME_boundary" in buffer:
-                        # Split the buffer by the MIME boundary
-                        parts = buffer.split(b"--MIME_boundary", 1)
-                        buffer = parts[1]
-                        mime_part = parts[0]
-
-                        if mime_part:
-                            # Parse the MIME part
-                            msg = message_from_bytes(mime_part, policy=default)
-                            if msg.is_multipart():
-                                for part in msg.iter_parts():
-                                    process_mime_part(part, turno_api, token)
-                                    logging.info(part)
-                            else:
-                                process_mime_part(msg, turno_api, token)
-                                logging.info(msg)
-
+                            # Keep the remaining incomplete part in the buffer
+                            buffer = parts[-1]
             else:
-                print_with_timestamp(f"Failed to connect to event stream. Status code: {response.status_code}")
-                print_with_timestamp(response.text)
+                print(f"Failed to connect, status code: {response.status_code}")
+                #loop_count = 0
+
     except requests.exceptions.RequestException as e:
         print(f"Error occurred: {e}")
 
@@ -149,18 +142,24 @@ def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, s
 
 
 def process_mime_part(part, turno_api, token):
-    content_type = part.get_content_type()
+
+    content_type, body = extract_content_and_json(part)
+
     print_with_timestamp(content_type)
     if content_type == "application/json":
         #print_with_timestamp('application json')
-        event_data = part.get_payload(decode=True)
+        #print('json---------------------------------------')
+        #print(body)
+        event_data = body
         try:
             # Detect encoding before attempting to load the JSON
-            encoding = chardet.detect(event_data)['encoding']
-            if encoding is None:
-                encoding = 'utf-8'  # Default to utf-8 if detection fails
+            #encoding = chardet.detect(event_data)['encoding']
+            #if encoding is None:
+            #    encoding = 'utf-8'  # Default to utf-8 if detection fails
 
-            event = json.loads(event_data.decode(encoding, errors='replace'))
+            encoding = 'utf-8'  # Default to utf-8 if detection fails
+
+            event = event_data #json.loads(event_data.decode(encoding, errors='replace'))
             if event.get("eventType") != "videoloss":
                 event_ip_address = event.get("ipAddress")
                 date_time = event.get("dateTime")
@@ -178,38 +177,9 @@ def process_mime_part(part, turno_api, token):
             print_with_timestamp("Received malformed JSON event")
             #print(event_data)
 
-    elif content_type == "text/plain":
-        other_data = part.get_payload(decode=True)
-        json_start = other_data.find(b'{')
-        if json_start != -1:
-            json_data = other_data[json_start:]
-            try:
-                # Detect encoding and handle errors similarly
-                encoding = chardet.detect(json_data)['encoding']
-                if encoding is None:
-                    encoding = 'utf-8'
 
-                event = json.loads(json_data.decode(encoding, errors='replace'))
-                if event.get("eventType") != "videoloss":
-                    event_ip_address = event.get("ipAddress")
-                    date_time = event.get("dateTime")
-                    event_type = event.get("eventType")
-                    event_state = event.get("eventState")
-                    event_description = event.get("eventDescription")
-                    access_controller_event = event.get("AccessControllerEvent", {})
-                    employee_no_string = access_controller_event.get("employeeNoString")
-
-                    if employee_no_string:
-                        post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, date_time)
-
-            except json.JSONDecodeError:
-                print_with_timestamp("Received malformed JSON event:")
-                print_with_timestamp(json_data)
-        else:
-            print_with_timestamp(f"Received data of content type {content_type} without JSON content:")
-            #print(other_data)
     elif content_type == "image/jpeg":
-        image_data = part.get_payload(decode=True)
+        image_data = body
         print_with_timestamp("Received image data of length:", len(image_data))
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         file_name = f"{timestamp}_event_image.jpg"
@@ -217,7 +187,7 @@ def process_mime_part(part, turno_api, token):
             f.write(image_data)
         print_with_timestamp(f"Received image data of length: {len(image_data)} and saved as {file_name}")
     else:
-        other_data = part.get_payload(decode=True)
+        other_data = body
         print_with_timestamp(f"Received data of content type {content_type}:")
         #print(other_data)
 
@@ -230,6 +200,9 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
     }
     headers = {'Content-Type': 'application/json'}
 
+    #print(url)
+    #print(payload)
+
     while True:
         try:
             response = requests.post(url, data=json.dumps(payload), headers=headers)
@@ -237,6 +210,7 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
                 print_with_timestamp("Successfully posted {employee_no_string} to Turno API")
                 break  # Exit the loop on success
             elif response.status_code == 404:
+                #print(response)
                 print_with_timestamp(f"Post to Turno of {employee_no_string} received 404 error. Retrying in 10 seconds...")
                 time.sleep(10)  # Wait for 10 seconds before retrying
             else:
