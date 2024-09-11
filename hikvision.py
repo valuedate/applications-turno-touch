@@ -200,8 +200,8 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
     }
     headers = {'Content-Type': 'application/json'}
 
-    #print(url)
-    #print(payload)
+    print(url)
+    print(payload)
 
     while True:
         try:
@@ -210,7 +210,7 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
                 print_with_timestamp("Successfully posted {employee_no_string} to Turno API")
                 break  # Exit the loop on success
             elif response.status_code == 404:
-                #print(response)
+                print(response)
                 print_with_timestamp(f"Post to Turno of {employee_no_string} received 404 error. Retrying in 10 seconds...")
                 time.sleep(10)  # Wait for 10 seconds before retrying
             else:
