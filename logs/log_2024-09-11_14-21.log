@@ -1,0 +1,4 @@
+2024-09-11 14:21 - Starting new cycle. Log file: logs/log_2024-09-11_14-21.log
+2024-09-11 14:21 - Connecting to: 10.0.0.0
+2024-09-11 14:21 - Failed to ping to Turno API. Status code: 500
+2024-09-11 14:21 - CTRL+C detected. Exiting gracefully...

@@ -77,13 +77,19 @@ def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, s
     ping_thread.daemon = True  # This ensures the thread will exit when the main program exits
     ping_thread.start()
 
-    while True:
-        try:
-            # hikvision connection
-            EVENTS_API_URL = f'http://{ip_address}/ISAPI/Event/notification/alertStream'
+    # API URL for alert stream
+    url = f'http://{ip_address}/ISAPI/Event/notification/alertStream'
 
-            # Send the request to the camera with a timeout
-            response = requests.get(EVENTS_API_URL, auth=HTTPDigestAuth(ip_user, ip_pass), stream=True, timeout=10)
+    # Start a session to maintain connection
+    session = requests.Session()
+
+
+    try:
+
+        #EVENTS_API_URL = f'http://{ip_address}/ISAPI/Event/notification/alertStream'
+
+        # Send the request to the camera with a timeout
+        with session.get(url, auth=HTTPDigestAuth(ip_user, ip_pass), stream=True, timeout=999) as response:
 
             # Check if the request was successful
             if response.status_code == 200:
@@ -136,11 +142,10 @@ def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, s
             else:
                 print_with_timestamp(f"Failed to connect to event stream. Status code: {response.status_code}")
                 print_with_timestamp(response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"Error occurred: {e}")
 
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Error: {e}")
-            print_with_timestamp("Failed to connect. Waiting 10 seconds before retrying...")
-            time.sleep(10)  # Wait for 10 seconds before retrying
+
 
 
 def process_mime_part(part, turno_api, token):

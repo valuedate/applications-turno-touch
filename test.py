@@ -14,7 +14,7 @@ session = requests.Session()
 
 try:
     # Send a request to the alert stream with digest authentication
-    with session.get(url, auth=HTTPDigestAuth(username, password), stream=True, timeout=10) as response:
+    with session.get(url, auth=HTTPDigestAuth(username, password), stream=True, timeout=999) as response:
         if response.status_code == 200:
             print("Connected to alert stream.")
             # Stream the event data line by line
