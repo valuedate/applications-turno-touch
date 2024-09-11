@@ -145,7 +145,7 @@ def process_mime_part(part, turno_api, token):
 
     content_type, body = extract_content_and_json(part)
 
-    print_with_timestamp(content_type)
+    #print_with_timestamp(content_type)
     if content_type == "application/json":
         #print_with_timestamp('application json')
         #print('json---------------------------------------')
@@ -200,14 +200,12 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
     }
     headers = {'Content-Type': 'application/json'}
 
-    print(url)
-    print(payload)
 
     while True:
         try:
             response = requests.post(url, data=json.dumps(payload), headers=headers)
             if response.status_code == 200:
-                print_with_timestamp("Successfully posted {employee_no_string} to Turno API")
+                print_with_timestamp(f"Successfully posted {employee_no_string} to Turno API")
                 break  # Exit the loop on success
             elif response.status_code == 404:
                 print(response)
