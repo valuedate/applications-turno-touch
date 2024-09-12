@@ -2,9 +2,6 @@
 import requests
 import json
 from requests.auth import HTTPDigestAuth
-from email import message_from_bytes
-from email.policy import default
-import chardet
 import os
 import signal
 import sys
@@ -15,6 +12,7 @@ import logging
 import pyfiglet
 import threading
 import re
+import random
 
 
 # Directory to save images
@@ -65,7 +63,7 @@ def ping_turno_api_loop(turno_ping, token):
             time.sleep(60)  # Wait for 60 seconds
         except Exception as e:
             logging.error(f"Error during turno API ping: {e}")
-            time.sleep(60)  # Wait for 60 seconds even in case of an error
+            time.sleep(300)  # Wait for 300 seconds even in case of an error
 
 
 def extract_content_and_json(text):
@@ -145,18 +143,10 @@ def process_mime_part(part, turno_api, token):
 
     content_type, body = extract_content_and_json(part)
 
-    #print_with_timestamp(content_type)
     if content_type == "application/json":
-        #print_with_timestamp('application json')
-        #print('json---------------------------------------')
-        #print(body)
+
         event_data = body
         try:
-            # Detect encoding before attempting to load the JSON
-            #encoding = chardet.detect(event_data)['encoding']
-            #if encoding is None:
-            #    encoding = 'utf-8'  # Default to utf-8 if detection fails
-
             encoding = 'utf-8'  # Default to utf-8 if detection fails
 
             event = event_data #json.loads(event_data.decode(encoding, errors='replace'))
@@ -200,8 +190,10 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
     }
     headers = {'Content-Type': 'application/json'}
 
+    max_retries = 8
+    base_sleep_time = 5  # Base sleep time in seconds
 
-    while True:
+    for attempt in range(1, max_retries + 1):
         try:
             response = requests.post(url, data=json.dumps(payload), headers=headers)
             if response.status_code == 200:
@@ -209,14 +201,14 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
                 break  # Exit the loop on success
             elif response.status_code == 404:
                 print(response)
-                print_with_timestamp(f"Post to Turno of {employee_no_string} received 404 error. Retrying in 10 seconds...")
-                time.sleep(10)  # Wait for 10 seconds before retrying
+                print_with_timestamp(f"Post to Turno of {employee_no_string} received 404 error. User code doesn't exist in Turno")
+                break  # Exit the loop for 404 (user doesn't exist)
             else:
                 print_with_timestamp(f"Failed to post {employee_no_string} to Turno API. Status code: {response.status_code}")
                 logging.info(f"Failed to post {employee_no_string} to Turno API. Status code: {response.status_code}")
-                # Optionally, you can print the response text or log it
-                # print_with_timestamp(response.text)
-                break  # Exit the loop for any status code other than 404
+                sleep_time = random.uniform(base_sleep_time, base_sleep_time * attempt)  # Increase sleep time after each failure
+                print_with_timestamp(f"Retrying in {sleep_time:.2f} seconds...")
+                time.sleep(sleep_time)  # Wait before retrying
         except requests.exceptions.RequestException as e:
             print_with_timestamp(f"Error posting to Turno API: {e}")
             break  # Exit the loop on request exception
@@ -249,14 +241,14 @@ def save_image(filename, image_data):
     print_with_timestamp(f"Image saved as: {file_path}")
 
 def main():
-    print('###############################')
+    print('##############################################################')
     print_ascii_message('TURNO')
-    print('###############################')
-    print('####### www.turno.cloud #######')
-    print('###############################')
-    print('  on-prem to cloud interface')
-    print('    developed by valuedate')
-    print('###############################')
+    print('##############################################################')
+    print('####################### www.turno.cloud ######################')
+    print('##############################################################')
+    print('                  on-prem to cloud interface')
+    print('                    developed by valuedate')
+    print('##############################################################')
     config = configparser.ConfigParser()
     config.read('config.ini')  # Replace with the actual path to the config file
 
