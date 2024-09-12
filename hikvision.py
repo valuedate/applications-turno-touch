@@ -231,6 +231,7 @@ def ping_turno_api(turno_ping, token):
     try:
         response = requests.post(url, data=json.dumps(payload), headers=headers)
         if response.status_code == 200:
+            logging.info("Successfully ping to Turno API")
             print_with_timestamp("Successfully ping to Turno API")
         else:
             print_with_timestamp(f"Failed to ping to Turno API. Status code: {response.status_code}")
