@@ -60,7 +60,7 @@ def ping_turno_api_loop(turno_ping, token):
     while True:
         try:
             ping_turno_api(turno_ping, token)  # Call the ping_turno_api function
-            time.sleep(60)  # Wait for 60 seconds
+            time.sleep(300)  # Wait for 300 seconds
         except Exception as e:
             logging.error(f"Error during turno API ping: {e}")
             time.sleep(300)  # Wait for 300 seconds even in case of an error
@@ -110,6 +110,7 @@ def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, s
 
             # Check if the request was successful
             if response.status_code == 200:
+                logging.info("Connected to the event stream. Listening for events...")
                 print_with_timestamp("Connected to the event stream. Listening for events...")
                 buffer = ''
                 for line in response.iter_lines():
@@ -130,11 +131,13 @@ def get_events(ip_address, ip_user, ip_pass, turno_api, token, lock_file_path, s
                             # Keep the remaining incomplete part in the buffer
                             buffer = parts[-1]
             else:
-                print(f"Failed to connect, status code: {response.status_code}")
+                logging.error(f"Failed to connect, status code: {response.status_code}")
+                print_with_timestamp(f"Failed to connect, status code: {response.status_code}")
                 #loop_count = 0
 
     except requests.exceptions.RequestException as e:
-        print(f"Error occurred: {e}")
+        logging.error(f"Error occurred: {e}")
+        print_with_timestamp(f"Error occurred: {e}")
 
 
 
@@ -164,8 +167,9 @@ def process_mime_part(part, turno_api, token):
                     post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, date_time)
 
         except json.JSONDecodeError:
+            logging.error("Received malformed JSON event")
             print_with_timestamp("Received malformed JSON event")
-            #print(event_data)
+
 
 
     elif content_type == "image/jpeg":
@@ -175,11 +179,12 @@ def process_mime_part(part, turno_api, token):
         file_name = f"{timestamp}_event_image.jpg"
         with open(file_name, 'wb') as f:
             f.write(image_data)
+        logging.info(f"Received image data of length: {len(image_data)} and saved as {file_name}")
         print_with_timestamp(f"Received image data of length: {len(image_data)} and saved as {file_name}")
     else:
         other_data = body
+        logging.info(f"Received data of content type {content_type}")
         print_with_timestamp(f"Received data of content type {content_type}:")
-        #print(other_data)
 
 def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, date_time):
     url = f"{turno_api}{token}"
@@ -197,10 +202,12 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
         try:
             response = requests.post(url, data=json.dumps(payload), headers=headers)
             if response.status_code == 200:
+                logging.info(f"Successfully posted {employee_no_string} to Turno API")
                 print_with_timestamp(f"Successfully posted {employee_no_string} to Turno API")
                 break  # Exit the loop on success
             elif response.status_code == 404:
                 print(response)
+                logging.error(f"Post to Turno of {employee_no_string} received 404 error. User code doesn't exist in Turno")
                 print_with_timestamp(f"Post to Turno of {employee_no_string} received 404 error. User code doesn't exist in Turno")
                 break  # Exit the loop for 404 (user doesn't exist)
             else:
@@ -210,6 +217,7 @@ def post_to_turno_api(turno_api, token, employee_no_string, event_ip_address, da
                 print_with_timestamp(f"Retrying in {sleep_time:.2f} seconds...")
                 time.sleep(sleep_time)  # Wait before retrying
         except requests.exceptions.RequestException as e:
+            logging.error(f"Error posting to Turno API: {e}")
             print_with_timestamp(f"Error posting to Turno API: {e}")
             break  # Exit the loop on request exception
 
@@ -230,6 +238,7 @@ def ping_turno_api(turno_ping, token):
             # Optionally, you can print the response text or log it
             # print_with_timestamp(response.text)
     except requests.exceptions.RequestException as e:
+        logging.error(f"Error pinging to Turno API: {e}")
         print_with_timestamp(f"Error pinging to Turno API: {e}")
 
 
