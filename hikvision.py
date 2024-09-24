@@ -13,6 +13,10 @@ import pyfiglet
 import threading
 import re
 import random
+from logging.handlers import TimedRotatingFileHandler
+from datetime import datetime
+import os
+import zipfile
 
 
 # Directory to save images
@@ -25,19 +29,48 @@ boundary = '--MIME_boundary'
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 
 
+def zip_old_log(log_filename):
+    """Function to zip the rotated log file."""
+    zip_filename = log_filename + '.zip'
+    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        zipf.write(log_filename, os.path.basename(log_filename))
+    os.remove(log_filename)  # Remove the original log file after zipping
+
 # init logging
 def setup_logging():
     # Create a log file with the start date of the cycle
     start_date = datetime.now().strftime('%Y-%m-%d_%H-%M')
     log_filename = f'logs/log_{start_date}.log'  # Replace with your desired log directory and filename
 
-    # Set up logging configuration
-    logging.basicConfig(
-        filename=log_filename,
-        level=logging.INFO,
-        format='%(asctime)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M'
-    )
+    # Ensure log directory exists
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+
+    # Set up TimedRotatingFileHandler to rotate logs every week
+    handler = TimedRotatingFileHandler(log_filename, when='W0', interval=1, backupCount=4)
+    handler.setLevel(logging.INFO)
+
+    # Set up the log format
+    formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M')
+    handler.setFormatter(formatter)
+
+    # Add a function to compress the log after it rotates
+    def on_rollover():
+        """This is called after rollover to compress the log."""
+        if handler.stream:  # If the log stream is active
+            handler.stream.close()  # Close the log file
+            handler.stream = None  # Clear the stream reference
+        zip_old_log(handler.baseFilename)  # Zip the rotated log file
+
+    # Override the rollover method of the handler to include the compression
+    handler.rotator = lambda source, dest: on_rollover()
+
+    # Get the root logger and set the handler
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+
+    # Return the log filename (current log file in use)
     return log_filename
 
 def signal_handler(sig, frame):
